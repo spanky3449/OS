@@ -39,6 +39,10 @@
 #define NTHREADS  8
 
 static struct semaphore *tsem = NULL;
+static struct lock *tlock = NULL;
+static struct cv *tcv = NULL;
+static struct cv *joincv = NULL;
+static struct lock *joinlock = NULL;
 
 static
 void
@@ -52,6 +56,39 @@ init_sem(void)
 	}
 }
 
+static
+void
+init_cvlock(void)
+{
+	if (tlock == NULL)
+	{
+		tlock = lock_create("tlock");
+		if (tlock == NULL)
+			panic("Threadtest: lock_create failed\n");
+	}
+
+	 if (joinlock == NULL)
+        {
+                joinlock = lock_create("joinlock");
+                if (tlock == NULL)
+                        panic("Threadtest: lock_create failed\n");
+        }
+
+	if (tcv == NULL)
+	{
+		tcv = cv_create("tcv");
+		if (tcv == NULL)
+			panic("threadtest: cv_create failed\n");
+	}
+	
+	if (joincv == NULL)
+        {
+                joincv = cv_create("joincv");
+                if (tcv == NULL)
+                        panic("threadtest: cv_create failed\n");
+        }
+
+}
 static
 void
 loudthread(void *junk, unsigned long num)
@@ -141,6 +178,61 @@ threadtest2(int nargs, char **args)
 	kprintf("Starting thread test 2...\n");
 	runthreads(0);
 	kprintf("\nThread test 2 done.\n");
+
+	return 0;
+}
+
+static
+void
+printthread(void* data1, unsigned long data2)
+{
+	(void)data1;
+	kprintf("This is child thread %ld\n", data2);
+}
+static
+void
+childthread(void* data1, unsigned long data2)
+{
+        (void)data1;
+	//create child threads
+	thread_fork("child", NULL, printthread, NULL, data2);
+	//test whether parents wait for children to print first
+	thread_join();
+	kprintf("This is parent thread %ld\n", data2);
+	lock_acquire(tlock);
+	cv_signal(tcv, tlock);
+	lock_release(tlock);
+}
+
+static
+void
+testthreadjoin()
+{
+	
+	for (int i = 0; i<NTHREADS; i++)
+	{
+		//create parent threads
+        	thread_fork("parent", NULL, childthread, NULL, i);
+	}
+	for (int i = 0; i<NTHREADS; i++)
+	{
+		lock_acquire(tlock);
+		cv_wait(tcv, tlock);
+		lock_release(tlock);
+	}
+
+}
+
+int
+threadtest4(int nargs, char **args)
+{
+	(void)nargs;
+	(void)args;
+
+	init_cvlock();
+	kprintf("Starting thread test 4...\n");
+	testthreadjoin();
+	kprintf("\nThread test 4 done.\n");
 
 	return 0;
 }
