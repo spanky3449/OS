@@ -150,6 +150,10 @@ thread_create(const char *name)
 	thread->t_did_reserve_buffers = false;
 
 	/* If you add to struct thread, be sure to initialize here */
+	thread->child_status = false;
+	thread->parent = NULL;
+	thread->join_lock = lock_create(name);
+	thread->join_cv = cv_create(name);
 
 	return thread;
 }
@@ -526,6 +530,7 @@ thread_fork(const char *name,
 	/* Attach the new thread to its process */
 	if (proc == NULL) {
 		proc = curthread->t_proc;
+		newthread->parent = curthread;
 	}
 	result = proc_addthread(proc, newthread);
 	if (result) {
@@ -540,6 +545,7 @@ thread_fork(const char *name,
 	 * for the spllower() that will be done releasing it.
 	 */
 	newthread->t_iplhigh_count++;
+
 
 	/* Set up the switchframe so entrypoint() gets called */
 	switchframe_init(newthread, entrypoint, data1, data2);
@@ -782,8 +788,20 @@ void
 thread_exit(void)
 {
 	struct thread *cur;
-
 	cur = curthread;
+	if (cur->parent != NULL)
+	{
+		cur->parent->child_status = true;
+		lock_acquire(cur->parent->join_lock);
+		cv_signal(cur->parent->join_cv, cur->parent->join_lock);
+		lock_release(cur->parent->join_lock);
+	}
+	cur->parent = NULL;
+	
+		
+	cv_destroy(cur->join_cv);
+	lock_destroy(cur->join_lock);
+
 
 	KASSERT(cur->t_did_reserve_buffers == false);
 
@@ -814,6 +832,17 @@ thread_yield(void)
 	thread_switch(S_READY, NULL, NULL);
 }
 
+int
+thread_join()
+{
+	struct thread *cur;
+	cur = curthread;
+
+	lock_acquire(cur->join_lock);
+	cv_wait(cur->join_cv, cur->join_lock);
+	lock_release(cur->join_lock);
+	return 0;
+}
 ////////////////////////////////////////////////////////////
 
 /*
